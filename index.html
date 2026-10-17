@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>2D Cricket Game</title>
+  <style>
+    :root {
+      --bg1: #0f172a;
+      --bg2: #111827;
+      --grass: #1d7a3e;
+      --grass2: #2e9d54;
+      --pitch: #d7c39a;
+      --line: #f8fafc;
+      --bat: #f59e0b;
+      --bat-dark: #d97706;
+      --ball: #f0f2f5;
+      --shadow: rgba(0,0,0,0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #1e293b, var(--bg1));
+      color: white;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+
+    .game-shell {
+      width: min(94vw, 980px);
+      background: rgba(15, 23, 42, 0.7);
+      border: 2px solid rgba(255,255,255,0.08);
+      border-radius: 18px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      padding: 18px;
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .scoreboard {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .score-item {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 8px 14px;
+      min-width: 110px;
+    }
+
+    .label {
+      font-size: 11px;
+      opacity: 0.7;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .value {
+      font-size: 24px;
+    }
+
+    .controls {
+      font-size: 13px;
+      opacity: 0.9;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 8px 12px;
+    }
+
+    canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 14px;
+      background: linear-gradient(#60a5fa 0%, #dbeafe 30%, var(--grass) 30%, var(--grass2) 100%);
+      border: 2px solid rgba(255,255,255,0.18);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-shell">
+    <div class="hud">
+      <div class="scoreboard">
+        <div class="score-item">
+          <span class="label">Score</span>
+          <span id="score" class="value">0</span>
+        </div>
+        <div class="score-item">
+          <span class="label">Wickets</span>
+          <span id="wickets" class="value">0/10</span>
+        </div>
+        <div class="score-item">
+          <span class="label">Balls</span>
+          <span id="balls" class="value">0</span>
+        </div>
+      </div>
+
+      <div class="controls">
+        Press <strong>Space</strong> or click the game to swing
+      </div>
+    </div>
+
+    <canvas id="gameCanvas" width="960" height="430"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const scoreEl = document.getElementById("score");
+    const wicketsEl = document.getElementById("wickets");
+    const ballsEl = document.getElementById("balls");
+
+    const state = {
+      score: 0,
+      wickets: 0,
+      balls: 0,
+      message: "Press Space to bat",
+      gameOver: false,
+      swingTimer: 0,
+      ballDelay: 0,
+      best: Number(localStorage.getItem("cricketBest") || 0),
+      time: 0
+    };
+
+    const batsman = {
+      x: 720,
+      y: 220,
+      radius: 28,
+      batLength: 78,
+      swingRot: 0
+    };
+
+    const ball = {
+      x: 120,
+      y: 220,
+      r: 10,
+      vx: 0,
+      vy: 0,
+      active: false,
+      trail: []
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function resetBall() {
+      const laneOffset = (Math.random() - 0.5) * 90;
+      ball.x = 120;
+      ball.y = 220 + laneOffset;
+      ball.r = 10;
+      ball.vx = 5.2 + Math.random() * 1.2;
+      ball.vy = (Math.random() - 0.5) * 2.4;
+      ball.active = true;
+      ball.trail = [];
+      state.message = "Bowler running in...";
+    }
+
+    function swing() {
+      if (state.gameOver) return;
+      if (!ball.active) return;
+
+      state.swingTimer = 0.7;
+      batsman.swingRot = 1;
+      state.message = "Swing!";
+    }
+
+    function restartGame() {
+      state.score = 0;
+      state.wickets = 0;
+      state.balls = 0;
+      state.message = "New innings. Press Space to bat";
+      state.gameOver = false;
+      state.swingTimer = 0;
+      state.ballDelay = 0;
+      ball.active = false;
+      ball.trail = [];
+      updateHud();
+      setTimeout(() => {
+        if (!state.gameOver) {
+          resetBall();
+        }
+      }, 600);
+    }
+
+    function endGame() {
+      state.gameOver = true;
+      state.best = Math.max(state.best, state.score);
+      localStorage.setItem("cricketBest", String(state.best));
+      state.message = `Innings over! Final: ${state.score}. Press R to retry`;
+    }
+
+    function updateHud() {
+      scoreEl.textContent = state.score;
+      wicketsEl.textContent = `${state.wickets}/10`;
+      ballsEl.textContent = state.balls;
+    }
+
+    function decideShot() {
+      const dx = ball.x - batsman.x;
+      const dy = Math.abs(ball.y - batsman.y);
+
+      if (dx > 20 || dy > 65) {
+        return;
+      }
+
+      const timing = Math.abs(ball.y - batsman.y);
+      const swingPower = clamp(1 - timing / 70, 0, 1);
+
+      if (swingPower > 0.65) {
+        let runs = 0;
+        if (swingPower > 0.9) runs = 6;
+        else if (swingPower > 0.75) runs = 4;
+        else if (swingPower > 0.55) runs = 2;
+        else runs = 1;
+
+        state.score += runs;
+        state.message = runs === 6 ? "SIX!!!" : runs === 4 ? "FOUR!" : `${runs} RUNS`;
+      } else {
+        state.message = "Dot ball";
+      }
+
+      state.balls += 1;
+      ball.active = false;
+      state.ballDelay = 850;
+      updateHud();
+    }
+
+    function handleBowlResult() {
+      if (state.gameOver) return;
+
+      if (ball.x > canvas.width + 20 || ball.x < -30) {
+        state.balls += 1;
+        updateHud();
+        state.message = "Dot ball";
+        ball.active = false;
+        state.ballDelay = 850;
+      }
+
+      if (ball.x >= batsman.x - 16 && ball.x <= batsman.x + 18) {
+        const nearY = Math.abs(ball.y - batsman.y);
+        if (nearY < 30 && state.swingTimer > 0.08) {
+          decideShot();
+        } else if (nearY < 30 && state.swingTimer <= 0.08) {
+          state.wickets += 1;
+          state.message = "OUT!";
+          state.balls += 1;
+          updateHud();
+          ball.active = false;
+          state.ballDelay = 1000;
+          if (state.wickets >= 10) {
+            endGame();
+          }
+        }
+      }
+    }
+
+    function update(dt) {
+      if (state.gameOver) return;
+
+      state.time += dt;
+
+      // swing animation
+      if (state.swingTimer > 0) {
+        state.swingTimer -= dt;
+        batsman.swingRot = 1 - state.swingTimer / 0.7;
+      } else {
+        batsman.swingRot *= 0.9;
+      }
+
+      if (!ball.active) {
+        state.ballDelay -= dt * 1000;
+        if (state.ballDelay <= 0) {
+          resetBall();
+        }
+      } else {
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+        ball.trail.push({ x: ball.x, y: ball.y });
+        if (ball.trail.length > 18) ball.trail.shift();
+
+        if (ball.y <= 30 || ball.y >= canvas.height - 30) {
+          ball.vy *= -0.85;
+          ball.y = clamp(ball.y, 30, canvas.height - 30);
+        }
+
+        if (ball.x > canvas.width - 20) {
+          ball.active = false;
+          state.ballDelay = 700;
+          state.message = "Ball missed";
+          state.balls += 1;
+          updateHud();
+        }
+
+        if (ball.x >= batsman.x - 25 && ball.x <= batsman.x + 25) {
+          if (Math.abs(ball.y - batsman.y) < 34) {
+            if (state.swingTimer > 0.08) {
+              decideShot();
+            } else {
+              state.wickets += 1;
+              state.message = "OUT!";
+              state.balls += 1;
+              updateHud();
+              ball.active = false;
+              state.ballDelay = 1000;
+              if (state.wickets >= 10) endGame();
+            }
+          }
+        }
+      }
+
+      if (!state.gameOver && state.balls >= 12 && state.wickets < 10) {
+        endGame();
+      }
+    }
+
+    function drawScene() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Sky
+      ctx.fillStyle = "#93c5fd";
+      ctx.fillRect(0, 0, canvas.width, 120);
+
+      // Cloud
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      drawCloud(120, 70, 1.2);
+      drawCloud(720, 90, 1.3);
+
+      // Ground
+      ctx.fillStyle = "#2f9e44";
+      ctx.fillRect(0, 120, canvas.width, canvas.height - 120);
+
+      // Pitch strip
+      ctx.fillStyle = "#d9c49a";
+      ctx.fillRect(0, 120, canvas.width, 160);
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 16; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * 60, 120);
+        ctx.lineTo(i * 60, 280);
+        ctx.stroke();
+      }
+
+      // Stumps
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(845, 150, 6, 100);
+      ctx.fillRect(860, 150, 6, 100);
+      ctx.fillRect(875, 150, 6, 100);
+
+      // Batsman
+      const batAngle = -1.1 + batsman.swingRot * 1.8;
+      ctx.save();
+      ctx.translate(batsman.x, batsman.y);
+      ctx.rotate(batAngle);
+
+      // body
+      ctx.fillStyle = "#2dd4bf";
+      ctx.beginPath();
+      ctx.arc(0, 0, 20, 0, Math.PI * 2);
+      ctx.fill();
+
+      // legs
+      ctx.strokeStyle = "#f8fafc";
+      ctx.lineWidth = 8;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(-10, 20);
+      ctx.lineTo(-18, 60);
+      ctx.moveTo(10, 20);
+      ctx.lineTo(20, 60);
+      ctx.stroke();
+
+      // bat
+      ctx.fillStyle = "#f59e0b";
+      ctx.fillRect(20, -10, batsman.batLength, 12);
+      ctx.fillStyle = "#d97706";
+      ctx.fillRect(20, -10, 8, 12);
+      ctx.restore();
+
+      // Ball trail
+      if (ball.trail.length > 1) {
+        for (let i = 0; i < ball.trail.length; i++) {
+          const p = ball.trail[i];
+          const alpha = i / ball.trail.length;
+          ctx.fillStyle = `rgba(245, 245, 245, ${alpha * 0.5})`;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, ball.r * (0.4 + alpha * 0.6), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Ball
+      if (ball.active) {
+        ctx.fillStyle = "#f8fafc";
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#111827";
+        ctx.beginPath();
+        ctx.arc(ball.x + 2, ball.y - 3, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Message banner
+      ctx.fillStyle = "rgba(15, 23, 42, 0.7)";
+      ctx.fillRect(20, 18, 320, 46);
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "bold 26px Segoe UI";
+      ctx.fillText(state.message, 35, 49);
+
+      // Score message at bottom
+      ctx.fillStyle = "rgba(15,23,42,0.45)";
+      ctx.fillRect(725, 330, 200, 42);
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "bold 22px Segoe UI";
+      ctx.fillText(`Runs: ${state.score}`, 740, 358);
+
+      if (state.gameOver) {
+        ctx.fillStyle = "rgba(15, 23, 42, 0.78)";
+        ctx.fillRect(260, 130, 440, 120);
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "bold 34px Segoe UI";
+        ctx.fillText("Innings Complete", 320, 180);
+        ctx.font = "bold 24px Segoe UI";
+        ctx.fillText(`Final Score: ${state.score}`, 360, 220);
+      }
+    }
+
+    function drawCloud(x, y, scale = 1) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      ctx.beginPath();
+      ctx.arc(0, 0, 22, 0, Math.PI * 2);
+      ctx.arc(24, -10, 18, 0, Math.PI * 2);
+      ctx.arc(48, 0, 22, 0, Math.PI * 2);
+      ctx.arc(24, 10, 24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function loop(ts) {
+      const dt = Math.min(0.033, (ts - (loop.last || ts)) / 1000);
+      loop.last = ts;
+      update(dt);
+      drawScene();
+      requestAnimationFrame(loop);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        e.preventDefault();
+        swing();
+      }
+
+      if (e.key.toLowerCase() === "r" && state.gameOver) {
+        restartGame();
+      }
+    });
+
+    canvas.addEventListener("pointerdown", () => {
+      swing();
+    });
+
+    updateHud();
+    resetBall();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
